@@ -3,21 +3,24 @@ const HEADERS_SPLIT_TOP: usize = HEADERS_SPLIT.len() + 1;
 
 pub struct Request {
     pub headers: Vec<String>,
+    pub headers_end: usize,
     pub body_length: usize,
-    pub raw: String,
+    pub raw: Vec<u8>,
 }
 
 impl Request {
     pub fn new() -> Self {
         Self {
             headers: vec![],
+            headers_end: 0,
             body_length: 0,
-            raw: String::from(""),
+            raw: vec![],
         }
     }
 
-    pub fn update(&mut self, data: &String) {
-        self.raw += data;
+    pub fn update(&mut self, data: &mut Vec<u8>) {
+        self.raw.append(data);
+
         if self.raw.len() < HEADERS_SPLIT_TOP {
             return;
         }
