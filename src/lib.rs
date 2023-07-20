@@ -1,6 +1,3 @@
-const HEADERS_SPLIT: &str = "\r\n\r\n";
-const HEADERS_SPLIT_TOP: usize = HEADERS_SPLIT.len() + 1;
-
 pub struct Request {
     pub headers: Vec<String>,
     pub headers_end: usize,
@@ -21,43 +18,50 @@ impl Request {
     pub fn update(&mut self, data: &mut Vec<u8>) {
         self.raw.append(data);
 
-        if self.raw.len() < HEADERS_SPLIT_TOP {
-            return;
-        }
-
         if self.headers.is_empty() {
-            let mut as_chars = self.raw.chars().enumerate();
-            let count = as_chars.clone().count();
-            print!("COUNT {}\n", count);
+            let mut at = self.headers_end;
 
-            loop {
-                let (index, c) = match as_chars.next() {
-                    Some(v) => v,
-                    None => break,
-                };
+            while at < self.raw.len() {
+                if self.raw[at..].starts_with(b"\r\n\r\n") {
+                    let headers = self.raw[0..at].to_vec();
 
-                if c == '\r'
-                    && as_chars.next().unwrap() == '\n'
-                    && as_chars.next().unwrap() == '\r'
-                    && as_chars.next().unwrap() == '\n'
-                {
-                    self.headers = self.raw[0..at]
-                        .split("\r\n")
-                        .map(|s| s.to_owned())
-                        .collect();
+                    // https://stackoverflow.com/questions/64849149/how-to-split-a-vecu8-by-a-sequence-of-chars
+                    let mut values = headers
+                        .windows(2)
+                        .enumerate()
+                        .filter(|(_, w)| w == b"\r\n")
+                        .map(|(i, _)| i)
+                        .collect::<Vec<_>>();
+                    values.push(self.raw.len());
 
-                    for header in &self.headers {
-                        if header.starts_with("Content-Length:") {
-                            let parts: Vec<&str> = header.split(":").collect();
-                            let num = parts.last().unwrap();
+                    // print!("{:#?}", values);
+
+                    let mut split = 0;
+                    for index in values {
+                        if self.raw[split..index].starts_with(b"Content-Length:") {
+                            let mut v = vec![];
+                            let mut collect = false;
+                            for val in self.raw[split..index].to_vec().iter() {
+                                if collect {
+                                    v.push(*val);
+                                }
+                                if val == &b':' {
+                                    collect = true;
+                                }
+                            }
+                            let num = String::from_utf8(v).unwrap(); // TODO...
+
                             self.body_length = match num.trim().parse::<usize>() {
                                 Ok(i) => i,
-                                Err(_e) => 0,
+                                Err(_) => 0,
                             };
                         }
+                        split = index + "\r\n".len();
                     }
                 }
+                at += 1;
             }
+            self.headers_end = at;
         }
     }
 }
@@ -69,9 +73,8 @@ mod tests {
     #[test]
     fn it_works() {
         let mut r = Request::new();
-        r.update(&String::from("GET / HTTP/1.1\r\nTest: test\r\n\r\n"));
+        r.update(&mut "GET / HTTP/1.1\r\nContent-Length: 33\r\nHere: here\r\n\r\n".as_bytes().to_vec());
 
-        assert_eq!(r.raw, String::from("GET"));
-        assert_eq!(r.body_length, 0);
+        assert_eq!(r.body_length, 33);
     }
 }
