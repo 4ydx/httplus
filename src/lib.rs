@@ -4,7 +4,7 @@ pub struct Request {
     pub headers_end: usize,
     pub content_length: usize,
     pub raw: Vec<u8>,
-    pub errors: Vec<std::string::FromUtf8Error>,
+    pub header_errors: Vec<std::string::FromUtf8Error>,
 }
 
 const LINE_END: &[u8; 2] = b"\r\n";
@@ -25,15 +25,14 @@ impl Request {
         if self.headers.is_empty() {
             let mut at = self.headers_end;
 
-            let mut found = false;
+            let mut found_header_end = false;
             while at < self.raw.len() {
                 if self.raw[at..].starts_with(HEADER_END) {
-                    found = true;
-
+                    found_header_end = true;
                     self.headers_end = at + HEADER_END.len();
-                    let header_chunk = self.raw[0..at].to_vec();
 
                     // 'header_newlines' contains the "\r\n" indices where newlines occur
+                    let header_chunk = self.raw[0..at].to_vec();
                     let mut header_newlines = header_chunk
                         .windows(2)
                         .enumerate()
@@ -51,7 +50,7 @@ impl Request {
                             header_chunk[header_start..header_end.clone()].to_owned(),
                         ) {
                             Ok(s) => self.headers.push(s),
-                            Err(e) => self.errors.push(e),
+                            Err(e) => self.header_errors.push(e),
                         }
 
                         if self.raw[header_start..header_end.clone()]
@@ -70,7 +69,7 @@ impl Request {
                             let num = match String::from_utf8(v) {
                                 Ok(s) => s,
                                 Err(e) => {
-                                    self.errors.push(e);
+                                    self.header_errors.push(e);
                                     "0".to_owned()
                                 }
                             };
@@ -85,8 +84,8 @@ impl Request {
                 }
                 at += 1;
             }
-            if !found {
-                self.headers_end = at + HEADER_END.len();
+            if !found_header_end {
+                self.headers_end = at;
             }
         }
     }
@@ -105,7 +104,7 @@ mod tests {
                 .to_vec(),
         );
         assert_eq!(r.content_length, 4);
-        assert_eq!(r.errors.len(), 0);
+        assert_eq!(r.header_errors.len(), 0);
         assert_eq!(r.body(), vec![b'B', b'O', b'D', b'Y']);
         assert_eq!(r.body_complete(), true);
     }
@@ -131,7 +130,7 @@ mod tests {
         r.update(&mut "GET / HTTP/1.1\r\nHere: here\r\n".as_bytes().to_vec());
         r.update(&mut "More: more\r\nFinal: final\r\n\r\n".as_bytes().to_vec());
         assert_eq!(r.content_length, 0);
-        assert_eq!(r.errors.len(), 0);
+        assert_eq!(r.header_errors.len(), 0);
         assert_eq!(r.body_complete(), true);
     }
 }
