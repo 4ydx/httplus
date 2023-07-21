@@ -1,20 +1,15 @@
+#[derive(Debug, Default)]
 pub struct Request {
     pub headers: Vec<String>,
     pub headers_end: usize,
-    pub body_length: usize,
+    pub content_length: usize,
     pub raw: Vec<u8>,
+    pub errors: Vec<std::string::FromUtf8Error>,
 }
 
-impl Request {
-    pub fn new() -> Self {
-        Self {
-            headers: vec![],
-            headers_end: 0,
-            body_length: 0,
-            raw: vec![],
-        }
-    }
+const HEADER_END: &[u8; 4] = b"\r\n\r\n";
 
+impl Request {
     pub fn update(&mut self, data: &mut Vec<u8>) {
         self.raw.append(data);
 
@@ -22,26 +17,36 @@ impl Request {
             let mut at = self.headers_end;
 
             while at < self.raw.len() {
-                if self.raw[at..].starts_with(b"\r\n\r\n") {
-                    let headers = self.raw[0..at].to_vec();
+                if self.raw[at..].starts_with(HEADER_END) {
+                    let header_chunk = self.raw[0..at].to_vec();
 
-                    // https://stackoverflow.com/questions/64849149/how-to-split-a-vecu8-by-a-sequence-of-chars
-                    let mut values = headers
+                    // 'header_newlines' contains the "\r\n" indices where newlines occur
+                    let mut header_newlines = header_chunk
                         .windows(2)
                         .enumerate()
                         .filter(|(_, w)| w == b"\r\n")
                         .map(|(i, _)| i)
                         .collect::<Vec<_>>();
-                    values.push(self.raw.len());
+                    header_newlines.push(header_chunk.len());
 
                     // print!("{:#?}", values);
 
-                    let mut split = 0;
-                    for index in values {
-                        if self.raw[split..index].starts_with(b"Content-Length:") {
+                    // This first entry in header_newlines skips the HTTP version line
+                    let mut header_start = header_newlines[0] + "\r\n".len();
+                    for header_end in header_newlines[1..].iter() {
+                        match String::from_utf8(
+                            header_chunk[header_start..header_end.clone()].to_owned(),
+                        ) {
+                            Ok(s) => self.headers.push(s),
+                            Err(e) => self.errors.push(e),
+                        }
+
+                        if self.raw[header_start..header_end.clone()]
+                            .starts_with(b"Content-Length:")
+                        {
                             let mut v = vec![];
                             let mut collect = false;
-                            for val in self.raw[split..index].to_vec().iter() {
+                            for val in self.raw[header_start..header_end.clone()].to_vec().iter() {
                                 if collect {
                                     v.push(*val);
                                 }
@@ -49,14 +54,20 @@ impl Request {
                                     collect = true;
                                 }
                             }
-                            let num = String::from_utf8(v).unwrap(); // TODO...
+                            let num = match String::from_utf8(v) {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    self.errors.push(e);
+                                    "0".to_owned()
+                                }
+                            };
 
-                            self.body_length = match num.trim().parse::<usize>() {
+                            self.content_length = match num.trim().parse::<usize>() {
                                 Ok(i) => i,
                                 Err(_) => 0,
                             };
                         }
-                        split = index + "\r\n".len();
+                        header_start = header_end + "\r\n".len();
                     }
                 }
                 at += 1;
@@ -71,10 +82,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_works() {
-        let mut r = Request::new();
-        r.update(&mut "GET / HTTP/1.1\r\nContent-Length: 33\r\nHere: here\r\n\r\n".as_bytes().to_vec());
+    fn test_content_length() {
+        let mut r = Request::default();
+        r.update(
+            &mut "GET / HTTP/1.1\r\nContent-Length: 33\r\nHere: here\r\n\r\n"
+                .as_bytes()
+                .to_vec(),
+        );
+        println!("{:?}\n", r.headers);
+        assert_eq!(r.content_length, 33);
+        assert_eq!(r.errors.len(), 0);
+    }
 
-        assert_eq!(r.body_length, 33);
+    #[test]
+    fn test_content_length_zero() {
+        let mut r = Request::default();
+        r.update(&mut "GET / HTTP/1.1\r\nHere: here\r\n\r\n".as_bytes().to_vec());
+        println!("{:?}\n", r.headers);
+        assert_eq!(r.content_length, 0);
+        assert_eq!(r.errors.len(), 0);
     }
 }
