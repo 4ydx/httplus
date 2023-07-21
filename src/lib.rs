@@ -48,8 +48,6 @@ impl Request {
             .collect::<Vec<_>>();
         header_newlines.push(header_chunk.len());
 
-        // print!("{:#?}", values);
-
         // This first entry in header_newlines skips the HTTP version line
         let mut header_start = header_newlines[0] + LINE_END.len();
         for header_end in header_newlines[1..].iter() {
@@ -99,6 +97,9 @@ mod tests {
                 .as_bytes()
                 .to_vec(),
         );
+        assert_eq!(r.headers[0], "Content-Length: 4");
+        assert_eq!(r.headers[1], "Here: here");
+        assert_eq!(r.headers.len(), 2);
         assert_eq!(r.content_length, 4);
         assert_eq!(r.header_errors.len(), 0);
         assert_eq!(r.body(), vec![b'B', b'O', b'D', b'Y']);
@@ -113,6 +114,9 @@ mod tests {
                 .as_bytes()
                 .to_vec(),
         );
+        assert_eq!(r.headers[0], "Content-Length: 5");
+        assert_eq!(r.headers[1], "Here: here");
+        assert_eq!(r.headers.len(), 2);
         assert_eq!(r.content_length, 5);
         assert_eq!(r.body_complete(), false);
 
@@ -125,6 +129,10 @@ mod tests {
         let mut r = Request::default();
         r.update(&mut "GET / HTTP/1.1\r\nHere: here\r\n".as_bytes().to_vec());
         r.update(&mut "More: more\r\nFinal: final\r\n\r\n".as_bytes().to_vec());
+        assert_eq!(r.headers[0], "Here: here");
+        assert_eq!(r.headers[1], "More: more");
+        assert_eq!(r.headers[2], "Final: final");
+        assert_eq!(r.headers.len(), 3);
         assert_eq!(r.content_length, 0);
         assert_eq!(r.header_errors.len(), 0);
         assert_eq!(r.body_complete(), true);
