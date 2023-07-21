@@ -10,14 +10,26 @@ pub struct Request {
 const HEADER_END: &[u8; 4] = b"\r\n\r\n";
 
 impl Request {
+    pub fn body_complete(&self) -> bool {
+        self.raw[self.headers_end..].len() == self.content_length
+    }
+
+    pub fn body(&self) -> Vec<u8> {
+        self.raw[self.headers_end..].to_vec()
+    }
+
     pub fn update(&mut self, data: &mut Vec<u8>) {
         self.raw.append(data);
 
         if self.headers.is_empty() {
             let mut at = self.headers_end;
 
+            let mut found = false;
             while at < self.raw.len() {
                 if self.raw[at..].starts_with(HEADER_END) {
+                    found = true;
+
+                    self.headers_end = at + HEADER_END.len();
                     let header_chunk = self.raw[0..at].to_vec();
 
                     // 'header_newlines' contains the "\r\n" indices where newlines occur
@@ -72,7 +84,9 @@ impl Request {
                 }
                 at += 1;
             }
-            self.headers_end = at;
+            if !found {
+                self.headers_end = at + HEADER_END.len();
+            }
         }
     }
 }
@@ -85,21 +99,38 @@ mod tests {
     fn test_content_length() {
         let mut r = Request::default();
         r.update(
-            &mut "GET / HTTP/1.1\r\nContent-Length: 33\r\nHere: here\r\n\r\n"
+            &mut "GET / HTTP/1.1\r\nContent-Length: 4\r\nHere: here\r\n\r\nBODY"
                 .as_bytes()
                 .to_vec(),
         );
         println!("{:?}\n", r.headers);
-        assert_eq!(r.content_length, 33);
+        assert_eq!(r.content_length, 4);
         assert_eq!(r.errors.len(), 0);
+        assert_eq!(r.body(), vec![b'B', b'O', b'D', b'Y']);
+        assert_eq!(r.body_complete(), true);
+    }
+
+    #[test]
+    fn test_body_incomplete() {
+        let mut r = Request::default();
+        r.update(
+            &mut "GET / HTTP/1.1\r\nContent-Length: 5\r\nHere: here\r\n\r\nBODY"
+                .as_bytes()
+                .to_vec(),
+        );
+        println!("{:?}\n", r.headers);
+        assert_eq!(r.content_length, 5);
+        assert_eq!(r.body_complete(), false);
     }
 
     #[test]
     fn test_content_length_zero() {
         let mut r = Request::default();
-        r.update(&mut "GET / HTTP/1.1\r\nHere: here\r\n\r\n".as_bytes().to_vec());
+        r.update(&mut "GET / HTTP/1.1\r\nHere: here\r\n".as_bytes().to_vec());
+        r.update(&mut "More: more\r\nFinal: final\r\n\r\n".as_bytes().to_vec());
         println!("{:?}\n", r.headers);
         assert_eq!(r.content_length, 0);
         assert_eq!(r.errors.len(), 0);
+        assert_eq!(r.body_complete(), true);
     }
 }
