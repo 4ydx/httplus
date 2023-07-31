@@ -37,20 +37,21 @@ impl Request {
         }
     }
 
+    // The initial HTTP line (example: GET / HTTP/1.1) is skipped since the first
+    // newline_indices entry is the first instance of \r\n in the self.raw data field.
+    // The first instance is, of course, at the end of the 'GET / HTTP/1.1' line.
     fn parse_headers(&mut self) {
-        // 'header_newlines' contains the "\r\n" indices where newlines occur
         let header_chunk = self.raw[0..self.headers_end].to_vec();
-        let mut header_newlines = header_chunk
+        let mut newline_indices = header_chunk
             .windows(2)
             .enumerate()
             .filter(|(_, w)| w == b"\r\n")
             .map(|(i, _)| i)
             .collect::<Vec<_>>();
-        header_newlines.push(header_chunk.len());
+        newline_indices.push(header_chunk.len());
 
-        // This first entry in header_newlines skips the HTTP version line
-        let mut header_start = header_newlines[0] + LINE_END.len();
-        for header_end in header_newlines[1..].iter() {
+        let mut header_start = newline_indices[0] + LINE_END.len();
+        for header_end in newline_indices[1..].iter() {
             match String::from_utf8(header_chunk[header_start..header_end.clone()].to_owned()) {
                 Ok(s) => self.headers.push(s),
                 Err(e) => self.header_errors.push(e),
