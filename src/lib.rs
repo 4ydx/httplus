@@ -1,7 +1,7 @@
 #[derive(Debug, Default)]
 pub struct Request {
     pub headers: Vec<String>,
-    pub headers_end: usize,
+    pub find_headers_end: usize,
     pub content_length: usize,
     pub raw: Vec<u8>,
     pub header_errors: Vec<std::string::FromUtf8Error>,
@@ -10,28 +10,39 @@ pub struct Request {
 const LINE_END: &[u8; 2] = b"\r\n";
 const HEADER_END: &[u8; 4] = b"\r\n\r\n";
 
+/*
+    https://www.rfc-editor.org/rfc/rfc7230#section-3
+    HTTP-message = start-line
+                   *( header-field CRLF )
+                   CRLF
+                   [ message-body ]
+*/
+
 impl Request {
     pub fn body(&self) -> Vec<u8> {
-        self.raw[self.headers_end + HEADER_END.len()..].to_vec()
+        self.raw[self.find_headers_end + HEADER_END.len()..].to_vec()
     }
 
     pub fn body_complete(&self) -> bool {
-        self.raw[self.headers_end + HEADER_END.len()..].len() == self.content_length
+        if self.find_headers_end + HEADER_END.len() > self.raw.len() {
+            return false;
+        }
+        self.raw[self.find_headers_end + HEADER_END.len()..].len() == self.content_length
     }
 
     pub fn update(&mut self, data: &mut Vec<u8>) {
         self.raw.append(data);
 
         if self.headers.is_empty() {
-            let mut at = self.headers_end;
+            let mut at = self.find_headers_end;
 
             while at < self.raw.len() {
                 if self.raw[at..].starts_with(HEADER_END) {
-                    self.headers_end = at;
-                    self.parse_headers();
+                    self.find_headers_end = at;
+                    self.parse_and_fill_headers();
                     break;
                 }
-                self.headers_end = at;
+                self.find_headers_end = at;
                 at += 1;
             }
         }
@@ -40,8 +51,8 @@ impl Request {
     // The initial HTTP line (example: GET / HTTP/1.1) is skipped since the first
     // newline_indices entry is the first instance of \r\n in the self.raw data field.
     // The first instance is, of course, at the end of the 'GET / HTTP/1.1' line.
-    fn parse_headers(&mut self) {
-        let header_chunk = self.raw[0..self.headers_end].to_vec();
+    fn parse_and_fill_headers(&mut self) {
+        let header_chunk = self.raw[0..self.find_headers_end].to_vec();
         let mut newline_indices = header_chunk
             .windows(2)
             .enumerate()
@@ -129,6 +140,8 @@ mod tests {
     fn test_content_length_zero() {
         let mut r = Request::default();
         r.update(&mut "GET / HTTP/1.1\r\nHere: here\r\n".as_bytes().to_vec());
+        assert_eq!(r.body_complete(), false);
+
         r.update(&mut "More: more\r\nFinal: final\r\n\r\n".as_bytes().to_vec());
         assert_eq!(r.headers[0], "Here: here");
         assert_eq!(r.headers[1], "More: more");
