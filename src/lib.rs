@@ -94,7 +94,7 @@ mod tests {
     fn test_content_length() {
         let mut r = Request::default();
         r.update(
-            &mut "GET / HTTP/1.1\r\nContent-Length: 4\r\nHere: here\r\n\r\nBODY"
+            &mut "POST / HTTP/1.1\r\nContent-Length: 4\r\nHere: here\r\n\r\nBODY"
                 .as_bytes()
                 .to_vec(),
         );
@@ -111,7 +111,7 @@ mod tests {
     fn test_body_incomplete() {
         let mut r = Request::default();
         r.update(
-            &mut "GET / HTTP/1.1\r\nContent-Length: 5\r\nHere: here\r\n\r\nBODY"
+            &mut "POST / HTTP/1.1\r\nContent-Length: 5\r\nHere: here\r\n\r\nBODY"
                 .as_bytes()
                 .to_vec(),
         );
