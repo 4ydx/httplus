@@ -17,7 +17,21 @@ pub struct Header {
 }
 
 impl Headers {
+    pub fn len(&self) -> usize {
+        self.raw.len()
+    }
+
     pub fn at(&self, index: usize) -> Header {
+        if index >= self.len() {
+            return Header {
+                charset: "utf8".to_owned(),
+                key: "".to_owned(),
+                value: "".to_owned(),
+                bytes: vec![],
+                error: "index out of bounds".to_owned(),
+            };
+        }
+
         let raw_header: &str = &self.raw[index].to_owned();
         let length = raw_header.len();
 
