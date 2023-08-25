@@ -17,6 +17,13 @@ pub struct Header {
 }
 
 impl Headers {
+    pub fn set(&mut self, index: usize, key: String, value: String) {
+        if index >= self.len() {
+            return;
+        }
+        self.raw[index] = format!("{}: {}", key, value);
+    }
+
     pub fn len(&self) -> usize {
         self.raw.len()
     }
