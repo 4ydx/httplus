@@ -1,3 +1,5 @@
+mod encoded_words;
+
 use base64::{engine::general_purpose, Engine as _};
 use encoding::label::encoding_from_whatwg_label;
 use encoding::DecoderTrap;
@@ -79,9 +81,12 @@ impl Headers {
             };
         }
 
+        /*
+
         // encoded-word
         //
         // https://www.rfc-editor.org/rfc/rfc2047#section-2
+        // https://www.rfc-editor.org/rfc/rfc2047#section-8
         // encoded-word = "=?" charset "?" encoding "?" encoded-text "?="
         let value_bytes = value.as_bytes();
         if value_bytes[0] == b'='
@@ -127,6 +132,7 @@ impl Headers {
             };
             return header;
         }
+        */
 
         return Header {
             charset: "utf8".to_owned(),
@@ -135,5 +141,44 @@ impl Headers {
             bytes: raw_header.as_bytes().to_vec(),
             error: "".to_owned(),
         };
+    }
+
+    fn as_utf8(key: &str, raw_header: &str) {
+        let mut parts = raw_header.split('?');
+        let charset = parts.nth(1).unwrap();
+        let encoding = parts.nth(2);
+        let encoded_text = parts.nth(3).unwrap();
+
+        let mut header = Header::default();
+        header.charset = charset.to_owned();
+
+        let header: Header = match encoding {
+            Some("B") => {
+                match &general_purpose::STANDARD_NO_PAD.decode(encoded_text) {
+                    Ok(bytes) => header.bytes = bytes.to_vec(),
+                    Err(e) => header.error = e.to_string(),
+                };
+                header.key = key.to_owned();
+
+                match encoding_from_whatwg_label(charset) {
+                    Some(enc) => {
+                        match enc.decode(&header.bytes, DecoderTrap::Replace) {
+                            Ok(s) => header.value = s,
+                            Err(e) => header.error = e.to_string(),
+                        };
+                    }
+                    None => header.error = format!("unsupported charset {}", charset).to_owned(),
+                };
+
+                header
+            }
+            // Some("Q") => quoted_printable::decode(encoded_text).unwrap(),
+            _ => {
+                header.error = "unsupported encoding".to_owned();
+                header
+            }
+        };
+        println!("{:?}", header);
+        //            return header;
     }
 }
