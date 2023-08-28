@@ -1,3 +1,7 @@
+use base64::{engine::general_purpose, Engine as _};
+use encoding::label::encoding_from_whatwg_label;
+use encoding::DecoderTrap;
+
 #[derive(Debug, PartialEq)]
 struct Point {
     s: usize, // start
@@ -7,13 +11,15 @@ struct Point {
 #[derive(Debug, PartialEq)]
 pub struct Raw {
     pub charset: String,
+    pub encoding: String,
     pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct EncodedWord {
     pub raw: Raw,
-    value: String,
+    pub value: String,
+    pub error: String,
 }
 
 impl EncodedWord {
@@ -26,14 +32,37 @@ fn parse_encoded_words(value: &str, words_at: Vec<Point>) -> Vec<EncodedWord> {
     let mut words: Vec<EncodedWord> = vec![];
     for word_at in words_at {
         let bytes = &value[word_at.s..word_at.e];
+
+        let parts: Vec<&str> = bytes.split('?').collect();
+        let charset = parts[1];
+        let encoded_text = parts[3];
+
         let raw = Raw {
-            charset: "".to_owned(),
+            charset: charset.to_owned(),
+            encoding: parts[2].to_owned(),
             bytes: bytes.into(),
         };
-        let word = EncodedWord {
+        let mut word = EncodedWord {
             raw,
             value: "".to_owned(),
+            error: "".to_owned(),
         };
+        if word.raw.encoding == "B" {
+            let mut bytes: Vec<u8> = vec![];
+            match &general_purpose::STANDARD_NO_PAD.decode(encoded_text) {
+                Ok(b) => bytes = b.to_vec(),
+                Err(e) => word.error = e.to_string(),
+            };
+            match encoding_from_whatwg_label(charset) {
+                Some(enc) => {
+                    match enc.decode(&bytes, DecoderTrap::Replace) {
+                        Ok(b) => word.value = b,
+                        Err(e) => word.error = e.to_string(),
+                    };
+                }
+                None => word.error = format!("unsupported charset {}", charset).to_owned(),
+            };
+        }
         words.push(word);
     }
     words
@@ -73,25 +102,19 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_encoded_words() {
-        let value = "=?a?= nothing =?b?=";
+    fn test_parse_encoded_words_1() {
+        let value = "=?US-ASCII?Q?Keith_Moore?= <moore@cs.utk.edu>";
         let words_at = find_encoded_words(value);
-
         let word1 = EncodedWord {
             raw: Raw {
-                charset: "".to_owned(),
-                bytes: vec![b'=', b'?', b'a', b'?', b'='],
+                charset: "US-ASCII".to_owned(),
+                encoding: "Q".to_owned(),
+                bytes: value[words_at[0].s..words_at[0].e].as_bytes().to_vec(),
             },
             value: "".to_owned(),
+            error: "".to_owned(),
         };
-        let word2 = EncodedWord {
-            raw: Raw {
-                charset: "".to_owned(),
-                bytes: vec![b'=', b'?', b'b', b'?', b'='],
-            },
-            value: "".to_owned(),
-        };
-        let expect = vec![word1, word2];
+        let expect = vec![word1];
 
         assert_eq!(expect, parse_encoded_words(value, words_at));
     }
