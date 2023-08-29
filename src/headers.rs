@@ -1,7 +1,3 @@
-use base64::{engine::general_purpose, Engine as _};
-use encoding::label::encoding_from_whatwg_label;
-use encoding::DecoderTrap;
-
 #[derive(Debug, Default)]
 pub struct Headers {
     pub raw: Vec<String>,
@@ -77,55 +73,6 @@ impl Headers {
                 bytes: raw_header.as_bytes().to_vec(),
                 error: "".to_owned(),
             };
-        }
-
-        // encoded-word
-        //
-        // https://www.rfc-editor.org/rfc/rfc2047#section-2
-        // encoded-word = "=?" charset "?" encoding "?" encoded-text "?="
-        let value_bytes = value.as_bytes();
-        if value_bytes[0] == b'='
-            && value_bytes[1] == b'?'
-            && value_bytes[value_bytes.len() - 2] == b'?'
-            && value_bytes[value_bytes.len() - 1] == b'='
-        {
-            let mut parts = raw_header.split('?');
-            let charset = parts.nth(1).unwrap();
-            let encoding = parts.nth(2);
-            let encoded_text = parts.nth(3).unwrap();
-
-            let mut header = Header::default();
-            header.charset = charset.to_owned();
-
-            let header: Header = match encoding {
-                Some("B") => {
-                    match &general_purpose::STANDARD_NO_PAD.decode(encoded_text) {
-                        Ok(bytes) => header.bytes = bytes.to_vec(),
-                        Err(e) => header.error = e.to_string(),
-                    };
-                    header.key = key.to_owned();
-
-                    match encoding_from_whatwg_label(charset) {
-                        Some(enc) => {
-                            match enc.decode(&header.bytes, DecoderTrap::Strict) {
-                                Ok(s) => header.value = s,
-                                Err(e) => header.error = e.to_string(),
-                            };
-                        }
-                        None => {
-                            header.error = format!("unsupported charset {}", charset).to_owned()
-                        }
-                    };
-
-                    header
-                }
-                // Some("Q") => quoted_printable::decode(encoded_text).unwrap(),
-                _ => {
-                    header.error = "unsupported encoding".to_owned();
-                    header
-                }
-            };
-            return header;
         }
 
         return Header {
