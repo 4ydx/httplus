@@ -1,4 +1,5 @@
 ## Http request parser
+[![Rust](https://github.com/4ydx/httplus/actions/workflows/rust.yml/badge.svg?branch=master)](https://github.com/4ydx/httplus/actions/workflows/rust.yml)****
 
 This is rudimentary.
 
