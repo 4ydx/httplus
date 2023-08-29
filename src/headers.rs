@@ -56,6 +56,18 @@ impl Headers {
                 if value.len() == 0 && byte != b' ' {
                     value = &raw_header[i..];
                 }
+            } else {
+                if byte == b' ' || byte == b'\t' {
+                    // https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.4
+                    // - no whitespace allowed between header name and colon
+                    // - more generally no whitespace allowed in header name
+                    return Header {
+                        key: "".to_owned(),
+                        value: "".to_owned(),
+                        bytes: raw_header.as_bytes().to_vec(),
+                        error: "header names cannot contain whitespace".to_owned(),
+                    };
+                }
             }
 
             if byte == b':' {
@@ -108,6 +120,22 @@ mod tests {
                 error: "non-ascii byte found at index 6".to_owned(),
             },
             h.at(1)
+        );
+    }
+
+    #[test]
+    fn test_whitespace_header_naem() {
+        let h = Headers {
+            raw: vec!["fo o: bar".to_owned(), "foo: bär".to_owned()],
+        };
+        assert_eq!(
+            Header {
+                bytes: "fo o: bar".as_bytes().to_vec(),
+                key: "".to_owned(),
+                value: "".to_owned(),
+                error: "header names cannot contain whitespace".to_owned(),
+            },
+            h.at(0)
         );
     }
 }
