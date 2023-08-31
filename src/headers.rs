@@ -1,9 +1,9 @@
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Headers {
     pub raw: Vec<String>,
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Header {
     pub key: String,
     pub value: String,

@@ -1,6 +1,6 @@
 mod headers;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Request {
     pub request_line: String,
     pub headers: headers::Headers,
