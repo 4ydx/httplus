@@ -2,11 +2,12 @@ mod headers;
 
 #[derive(Debug, Default)]
 pub struct Request {
+    pub request_line: String,
     pub headers: headers::Headers,
     pub headers_end: usize,
     pub content_length: usize,
     pub raw: Vec<u8>,
-    pub header_errors: Vec<std::string::FromUtf8Error>,
+    pub parsing_errors: Vec<std::string::FromUtf8Error>,
 }
 
 const LINE_END: &[u8; 2] = b"\r\n";
@@ -21,7 +22,25 @@ const HEADER_END: &[u8; 4] = b"\r\n\r\n";
 */
 
 impl Request {
+    pub fn dump(&self) -> Vec<u8> {
+        if !self.body_complete() {
+            return vec![];
+        }
+        let mut dump = vec![];
+        dump.append(&mut self.request_line.as_bytes().to_vec());
+        dump.append(&mut LINE_END.to_vec());
+        dump.append(&mut self.headers.raw.join("\r\n").as_bytes().to_vec());
+        dump.append(&mut HEADER_END.to_vec());
+        if self.body_complete() {
+            dump.append(&mut self.body());
+        }
+        dump
+    }
+
     pub fn body(&self) -> Vec<u8> {
+        if !self.body_complete() {
+            return vec![];
+        }
         self.raw[self.headers_end + HEADER_END.len()..].to_vec()
     }
 
@@ -32,7 +51,7 @@ impl Request {
         self.raw[self.headers_end + HEADER_END.len()..].len() == self.content_length
     }
 
-    pub fn update(&mut self, data: &mut Vec<u8>) {
+    pub fn update_raw(&mut self, data: &mut Vec<u8>) {
         self.raw.append(data);
 
         if self.headers.raw.is_empty() {
@@ -66,6 +85,12 @@ impl Request {
 
         let mut newline = newline_indices.iter();
         let mut at = newline.next().unwrap();
+
+        match String::from_utf8(header_chunk[0..*at].to_owned()) {
+            Ok(s) => self.request_line = s,
+            Err(e) => self.parsing_errors.push(e),
+        };
+
         loop {
             let sindex = at + LINE_END.len();
             let mut eindex = match newline.next() {
@@ -108,7 +133,7 @@ impl Request {
 
             match String::from_utf8(header.to_owned()) {
                 Ok(s) => self.headers.raw.push(s),
-                Err(e) => self.header_errors.push(e),
+                Err(e) => self.parsing_errors.push(e),
             }
             at = eindex;
 
@@ -131,7 +156,7 @@ mod tests {
     #[test]
     fn test_content_length() {
         let mut r = Request::default();
-        r.update(
+        r.update_raw(
             &mut "POST / HTTP/1.1\r\nContent-Length: 4\r\nHere: here\r\n\r\nBODY"
                 .as_bytes()
                 .to_vec(),
@@ -140,7 +165,7 @@ mod tests {
         assert_eq!(r.headers.raw[1], "Here: here");
         assert_eq!(r.headers.raw.len(), 2);
         assert_eq!(r.content_length, 4);
-        assert_eq!(r.header_errors.len(), 0);
+        assert_eq!(r.parsing_errors.len(), 0);
         assert_eq!(r.body(), vec![b'B', b'O', b'D', b'Y']);
         assert_eq!(r.body_complete(), true);
     }
@@ -148,7 +173,7 @@ mod tests {
     #[test]
     fn test_body_incomplete() {
         let mut r = Request::default();
-        r.update(
+        r.update_raw(
             &mut "POST / HTTP/1.1\r\nContent-Length: 5\r\nHere: here\r\n\r\nBODY"
                 .as_bytes()
                 .to_vec(),
@@ -159,30 +184,30 @@ mod tests {
         assert_eq!(r.content_length, 5);
         assert_eq!(r.body_complete(), false);
 
-        r.update(&mut "S".as_bytes().to_vec());
+        r.update_raw(&mut "S".as_bytes().to_vec());
         assert_eq!(r.body_complete(), true);
     }
 
     #[test]
     fn test_content_length_zero() {
         let mut r = Request::default();
-        r.update(&mut "GET / HTTP/1.1\r\nHere: here\r\n".as_bytes().to_vec());
+        r.update_raw(&mut "GET / HTTP/1.1\r\nHere: here\r\n".as_bytes().to_vec());
         assert_eq!(r.body_complete(), false);
 
-        r.update(&mut "More: more\r\nFinal: final\r\n\r\n".as_bytes().to_vec());
+        r.update_raw(&mut "More: more\r\nFinal: final\r\n\r\n".as_bytes().to_vec());
         assert_eq!(r.headers.raw[0], "Here: here");
         assert_eq!(r.headers.raw[1], "More: more");
         assert_eq!(r.headers.raw[2], "Final: final");
         assert_eq!(r.headers.raw.len(), 3);
         assert_eq!(r.content_length, 0);
-        assert_eq!(r.header_errors.len(), 0);
+        assert_eq!(r.parsing_errors.len(), 0);
         assert_eq!(r.body_complete(), true);
     }
 
     #[test]
     fn test_multi_line_header() {
         let mut r = Request::default();
-        r.update(
+        r.update_raw(
             &mut "GET / HTTP/1.1\r\nWrapping: wrapp\r\n ing\r\n\ttest\r\nAnother: a\r\n\r\n"
                 .as_bytes()
                 .to_vec(),
@@ -190,5 +215,25 @@ mod tests {
         assert_eq!(r.headers.raw[0], "Wrapping: wrappingtest");
         assert_eq!(r.headers.raw[1], "Another: a");
         assert_eq!(r.body_complete(), true);
+    }
+
+    #[test]
+    fn test_post_edit_dump() {
+        let mut r = Request::default();
+        r.update_raw(
+            &mut "GET / HTTP/1.1\r\nWrapping: wrapp\r\n ing\r\n\ttest\r\nAnother: a\r\nContent-Length: 7\r\n\r\nTHE END"
+                .as_bytes()
+                .to_vec(),
+        );
+        assert_eq!(r.headers.raw[0], "Wrapping: wrappingtest");
+        assert_eq!(r.headers.raw[1], "Another: a");
+        assert_eq!(r.body_complete(), true);
+
+        let h = r.headers.at(0);
+        r.headers.set(0, h.key, "updated-wrap".to_string());
+        match String::from_utf8(r.dump()) {
+            Ok(s) => println!("{}", s),
+            Err(e) => panic!("{}", e),
+        }
     }
 }
