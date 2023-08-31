@@ -63,7 +63,16 @@ impl Request {
                     self.parse_and_fill_headers();
                     break;
                 }
-                self.headers_end = at;
+                if at > HEADER_END.len() {
+                    // raw data might come in that splits the HEADER_END in two:
+                    //
+                    // EG:
+                    //  previous append to raw: "\r"
+                    //  next append to raw: "\n\r\n"
+                    //
+                    // as a result, backup enough to find a complete HEADER_END
+                    self.headers_end = at - HEADER_END.len();
+                }
                 at += 1;
             }
         }
@@ -218,6 +227,17 @@ mod tests {
     }
 
     #[test]
+    fn test_body() {
+        let mut r = Request::default();
+        r.update_raw(&mut "POST TEST\r".as_bytes().to_vec());
+        r.update_raw(&mut "\nContent-L".as_bytes().to_vec());
+        r.update_raw(&mut "ength: 4\r\n".as_bytes().to_vec());
+        r.update_raw(&mut "\r\nBODY".as_bytes().to_vec());
+        assert_eq!(r.headers.raw[0], "Content-Length: 4");
+        assert_eq!(r.body_complete(), true);
+    }
+
+    #[test]
     fn test_post_edit_dump() {
         let mut r = Request::default();
         r.update_raw(
@@ -231,9 +251,13 @@ mod tests {
 
         let h = r.headers.at(0);
         r.headers.set(0, h.key, "updated-wrap".to_string());
+        assert_eq!(r.headers.at(0).value, "updated-wrap");
+
+        /*
         match String::from_utf8(r.dump()) {
             Ok(s) => println!("{}", s),
             Err(e) => panic!("{}", e),
         }
+        */
     }
 }
