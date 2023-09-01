@@ -12,6 +12,10 @@ pub struct Header {
 }
 
 impl Headers {
+    pub fn add(&mut self, key: String, value: String) {
+        self.raw.push(format!("{}: {}", key, value));
+    }
+
     pub fn set(&mut self, index: usize, key: String, value: String) {
         if index >= self.len() {
             return;
@@ -120,6 +124,21 @@ mod tests {
                 error: "non-ascii byte found at index 6".to_owned(),
             },
             h.at(1)
+        );
+    }
+
+    #[test]
+    fn test_add_header() {
+        let mut h = Headers { raw: vec![] };
+        h.add("foo".to_owned(), "bar".to_owned());
+        assert_eq!(
+            Header {
+                bytes: "foo: bar".as_bytes().to_vec(),
+                key: "foo".to_owned(),
+                value: "bar".to_owned(),
+                error: "".to_owned(),
+            },
+            h.at(0)
         );
     }
 
