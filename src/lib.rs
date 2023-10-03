@@ -1,13 +1,15 @@
+mod errors;
 mod headers;
 
 #[derive(Debug, Clone, Default)]
-pub struct Request {
+pub struct Request<'a> {
     pub request_line: String,
     pub headers: headers::Headers,
     pub headers_end: usize,
-    pub content_length: usize,
     pub raw: Vec<u8>,
-    pub parsing_errors: Vec<std::string::FromUtf8Error>,
+    pub parsing_errors: Vec<errors::Errors<'a>>,
+    pub content_length: usize,
+    pub is_chunked: bool,
 }
 
 const LINE_END: &[u8; 2] = b"\r\n";
@@ -21,7 +23,7 @@ const HEADER_END: &[u8; 4] = b"\r\n\r\n";
                    [ message-body ]
 */
 
-impl Request {
+impl Request<'_> {
     pub fn dump(&self) -> Vec<u8> {
         if !self.body_complete() {
             return vec![];
@@ -78,9 +80,8 @@ impl Request {
         }
     }
 
-    // The initial HTTP line (example: GET / HTTP/1.1) is skipped since the first
-    // newline_indices entry is the first instance of \r\n in the self.raw data field.
-    // The first instance is, of course, at the end of the 'GET / HTTP/1.1' line.
+    // Below newline_indices starts with the first instance of a newline in the raw data.
+    // As a result the initial HTTP line (example: GET / HTTP/1.1) is automatically skipped.
     fn parse_and_fill_headers(&mut self) {
         let header_chunk = self.raw[0..self.headers_end].to_vec();
 
@@ -93,46 +94,79 @@ impl Request {
         newline_indices.push(header_chunk.len());
 
         let mut newline = newline_indices.iter();
-        let mut at = newline.next().unwrap();
+        let mut at = newline.next().unwrap(); // starting at the very first newline past
+                                              // the, for example, 'Get / HTTP/x.x' line
 
         match String::from_utf8(header_chunk[0..*at].to_owned()) {
+            // TODO: check that the first line of the HTTP request is valid
             Ok(s) => self.request_line = s,
-            Err(e) => self.parsing_errors.push(e),
+            Err(e) => self.parsing_errors.push(errors::Errors::Parse(e)),
         };
 
         loop {
-            let sindex = at + LINE_END.len();
             let mut eindex = match newline.next() {
                 Some(eindex) => eindex,
                 None => break,
             };
 
-            let mut skip: Vec<usize> = vec![sindex];
+            let sindex = at + LINE_END.len();
+            let mut skip: Vec<usize> = vec![sindex, *eindex]; // the first line of a header should
+                                                              // never be a "line folded" header
             loop {
                 if eindex == &header_chunk.len() {
                     break;
                 }
 
-                // evaluate the first byte in the next line
-                // to determine if we are dealing with a multi-line header
-                let next_byte = header_chunk[eindex + LINE_END.len()];
-                if next_byte == b'\t' || next_byte == b' ' {
-                    skip.push(*eindex);
-                    skip.push(eindex + LINE_END.len() + 1);
+                /*
+                  https://www.rfc-editor.org/rfc/rfc7230
 
+                  A proxy or gateway that receives an obs-fold in a response message
+                  that is not within a message/http container MUST either discard the
+                  message and replace it with a 502 (Bad Gateway) response, preferably
+                  with a representation explaining that unacceptable line folding was
+                  received, or replace each received obs-fold with one or more SP
+                  octets prior to interpreting the field value or forwarding the
+                  message downstream.
+
+                  https://www.ietf.org/rfc/rfc2616.txt
+
+                  All linear white space, including folding, has the same semantics as SP. A
+                  recipient MAY replace any linear white space with a single SP before
+                  interpreting the field value or forwarding the message downstream.
+
+                  LWS            = [CRLF] 1*( SP | HT )
+
+                  In other words, one or more spaces or tabs must be replaced with a single space.
+                */
+
+                // evaluate the first byte(s) in the next line
+                // to determine if we are dealing with a "line folded" header
+                let mut offset = 0;
+                let mut skipping = false;
+
+                let mut next_non_empty_char = header_chunk[eindex + LINE_END.len() + offset];
+                while next_non_empty_char == b'\t' || next_non_empty_char == b' ' {
+                    offset += 1;
+                    next_non_empty_char = header_chunk[eindex + LINE_END.len() + offset];
+                    skipping = true;
+                }
+
+                if skipping {
+                    let sindex = eindex + LINE_END.len() + offset;
                     eindex = match newline.next() {
                         Some(eindex) => eindex,
                         None => break,
                     };
+                    skip.push(sindex);
+                    skip.push(*eindex);
                 } else {
                     break;
                 }
             }
-            skip.push(*eindex);
 
-            // remove spaces in multi-line headers
+            // reduce spaces and tabs in "line folded" headers to a single space
             let mut header: Vec<u8> = vec![];
-            for i in 0..skip.len() - 1 {
+            for i in 0..skip.len() {
                 if i % 2 == 1 {
                     continue;
                 }
@@ -142,17 +176,38 @@ impl Request {
 
             match String::from_utf8(header.to_owned()) {
                 Ok(s) => self.headers.raw.push(s),
-                Err(e) => self.parsing_errors.push(e),
+                Err(e) => self.parsing_errors.push(errors::Errors::Parse(e)),
             }
             at = eindex;
 
-            // check most recent header to see if it contains content-length
             let header = self.headers.at(self.headers.raw.len() - 1);
-            if header.key == "Content-Length" && header.error.len() == 0 {
-                self.content_length = match header.value.trim().parse::<usize>() {
-                    Ok(i) => i,
-                    Err(_) => 0,
-                };
+
+            // check most recent header to see if it contains content-length
+            if header.key.to_lowercase() == "content-length" && header.error.len() == 0 {
+                if self.is_chunked {
+                    self.parsing_errors.push(errors::Errors::Header(
+                        "Transfer-Encoding and Content-Length headers mutually exclusive",
+                    ));
+                } else {
+                    self.content_length = match header.value.trim().parse::<usize>() {
+                        Ok(i) => i,
+                        Err(e) => {
+                            self.parsing_errors.push(errors::Errors::ContentLength(e));
+                            0
+                        }
+                    };
+                }
+            }
+
+            // check for chunked state: Transfer-Encoding: gzip, chunked
+            if header.key.to_lowercase() == "transfer-encoding" && header.error.len() == 0 {
+                if self.content_length > 0 {
+                    self.parsing_errors.push(errors::Errors::Header(
+                        "Transfer-Encoding and Content-Length headers are mutually exclusive",
+                    ));
+                } else {
+                    self.is_chunked = header.value.ends_with("chunked");
+                }
             }
         }
     }
@@ -217,13 +272,31 @@ mod tests {
     fn test_multi_line_header() {
         let mut r = Request::default();
         r.update_raw(
-            &mut "GET / HTTP/1.1\r\nWrapping: wrapp\r\n ing\r\n\ttest\r\nAnother: a\r\n\r\n"
+            &mut "GET / HTTP/1.1\r\nFirst: wrapp\r\n   ing\r\n\ttest\r\nSecond: wrapp\r\n    ing\r\n\ttest\r\n\r\n"
                 .as_bytes()
                 .to_vec(),
         );
-        assert_eq!(r.headers.raw[0], "Wrapping: wrappingtest");
-        assert_eq!(r.headers.raw[1], "Another: a");
+        assert_eq!(r.headers.raw[0], "First: wrappingtest");
+        assert_eq!(r.headers.raw[1], "Second: wrappingtest");
         assert_eq!(r.body_complete(), true);
+    }
+
+    #[test]
+    fn test_mutually_exclusive() {
+        let mut r = Request::default();
+        r.update_raw(
+            &mut "GET / HTTP/1.1\r\nContent-Length: 10\r\nTransfer-Encoding: chunked\r\n\r\n"
+                .as_bytes()
+                .to_vec(),
+        );
+        assert_eq!(r.parsing_errors.len(), 1);
+        assert_eq!(
+            r.parsing_errors.pop(),
+            Some(errors::Errors::Header(
+                "Transfer-Encoding and Content-Length headers are mutually exclusive",
+            ))
+        );
+        assert_eq!(r.body_complete(), false);
     }
 
     #[test]
