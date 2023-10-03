@@ -7,9 +7,9 @@ pub struct Request<'a> {
     pub headers: headers::Headers,
     pub headers_end: usize,
     pub raw: Vec<u8>,
-    pub parsing_errors: Vec<errors::Errors<'a>>,
     pub content_length: usize,
     pub is_chunked: bool,
+    pub parsing_errors: Vec<errors::Errors<'a>>,
 }
 
 const LINE_END: &[u8; 2] = b"\r\n";
@@ -53,7 +53,7 @@ impl Request<'_> {
         self.raw[self.headers_end + HEADER_END.len()..].len() == self.content_length
     }
 
-    pub fn update_raw(&mut self, data: &mut Vec<u8>) {
+    pub fn update_raw(&mut self, data: &mut Vec<u8>) -> Result<(), errors::Errors> {
         self.raw.append(data);
 
         if self.headers.raw.is_empty() {
@@ -62,7 +62,7 @@ impl Request<'_> {
             while at < self.raw.len() {
                 if self.raw[at..].starts_with(HEADER_END) {
                     self.headers_end = at;
-                    self.parse_and_fill_headers();
+                    self.parse_and_fill_headers()?;
                     break;
                 }
                 if at > HEADER_END.len() {
@@ -78,11 +78,12 @@ impl Request<'_> {
                 at += 1;
             }
         }
+        Ok(())
     }
 
     // Below newline_indices starts with the first instance of a newline in the raw data.
     // As a result the initial HTTP line (example: GET / HTTP/1.1) is automatically skipped.
-    fn parse_and_fill_headers(&mut self) {
+    fn parse_and_fill_headers(&mut self) -> Result<(), errors::Errors> {
         let header_chunk = self.raw[0..self.headers_end].to_vec();
 
         let mut newline_indices = header_chunk
@@ -106,7 +107,7 @@ impl Request<'_> {
         loop {
             let mut eindex = match newline.next() {
                 Some(eindex) => eindex,
-                None => break,
+                None => break Ok(()),
             };
 
             let sindex = at + LINE_END.len();
@@ -185,16 +186,13 @@ impl Request<'_> {
             // check most recent header to see if it contains content-length
             if header.key.to_lowercase() == "content-length" && header.error.len() == 0 {
                 if self.is_chunked {
-                    self.parsing_errors.push(errors::Errors::Header(
-                        "Transfer-Encoding and Content-Length headers mutually exclusive",
+                    break Err(errors::Errors::Header(
+                        "Transfer-Encoding and Content-Length headers are mutually exclusive",
                     ));
                 } else {
                     self.content_length = match header.value.trim().parse::<usize>() {
                         Ok(i) => i,
-                        Err(e) => {
-                            self.parsing_errors.push(errors::Errors::ContentLength(e));
-                            0
-                        }
+                        Err(e) => break Err(errors::Errors::ContentLength(e)),
                     };
                 }
             }
@@ -202,7 +200,7 @@ impl Request<'_> {
             // check for chunked state: Transfer-Encoding: gzip, chunked
             if header.key.to_lowercase() == "transfer-encoding" && header.error.len() == 0 {
                 if self.content_length > 0 {
-                    self.parsing_errors.push(errors::Errors::Header(
+                    break Err(errors::Errors::Header(
                         "Transfer-Encoding and Content-Length headers are mutually exclusive",
                     ));
                 } else {
@@ -220,11 +218,12 @@ mod tests {
     #[test]
     fn test_content_length() {
         let mut r = Request::default();
-        r.update_raw(
+        let res = r.update_raw(
             &mut "POST / HTTP/1.1\r\nContent-Length: 4\r\nHere: here\r\n\r\nBODY"
                 .as_bytes()
                 .to_vec(),
         );
+        assert_eq!(res, Ok(()));
         assert_eq!(r.headers.raw[0], "Content-Length: 4");
         assert_eq!(r.headers.raw[1], "Here: here");
         assert_eq!(r.headers.raw.len(), 2);
@@ -237,28 +236,32 @@ mod tests {
     #[test]
     fn test_body_incomplete() {
         let mut r = Request::default();
-        r.update_raw(
+        let res = r.update_raw(
             &mut "POST / HTTP/1.1\r\nContent-Length: 5\r\nHere: here\r\n\r\nBODY"
                 .as_bytes()
                 .to_vec(),
         );
+        assert_eq!(res, Ok(()));
         assert_eq!(r.headers.raw[0], "Content-Length: 5");
         assert_eq!(r.headers.raw[1], "Here: here");
         assert_eq!(r.headers.raw.len(), 2);
         assert_eq!(r.content_length, 5);
         assert_eq!(r.body_complete(), false);
 
-        r.update_raw(&mut "S".as_bytes().to_vec());
+        let res = r.update_raw(&mut "S".as_bytes().to_vec());
+        assert_eq!(res, Ok(()));
         assert_eq!(r.body_complete(), true);
     }
 
     #[test]
     fn test_content_length_zero() {
         let mut r = Request::default();
-        r.update_raw(&mut "GET / HTTP/1.1\r\nHere: here\r\n".as_bytes().to_vec());
+        let res = r.update_raw(&mut "GET / HTTP/1.1\r\nHere: here\r\n".as_bytes().to_vec());
+        assert_eq!(res, Ok(()));
         assert_eq!(r.body_complete(), false);
 
-        r.update_raw(&mut "More: more\r\nFinal: final\r\n\r\n".as_bytes().to_vec());
+        let res = r.update_raw(&mut "More: more\r\nFinal: final\r\n\r\n".as_bytes().to_vec());
+        assert_eq!(res, Ok(()));
         assert_eq!(r.headers.raw[0], "Here: here");
         assert_eq!(r.headers.raw[1], "More: more");
         assert_eq!(r.headers.raw[2], "Final: final");
@@ -271,11 +274,12 @@ mod tests {
     #[test]
     fn test_multi_line_header() {
         let mut r = Request::default();
-        r.update_raw(
+        let res = r.update_raw(
             &mut "GET / HTTP/1.1\r\nFirst: wrapp\r\n   ing\r\n\ttest\r\nSecond: wrapp\r\n    ing\r\n\ttest\r\n\r\n"
                 .as_bytes()
                 .to_vec(),
         );
+        assert_eq!(res, Ok(()));
         assert_eq!(r.headers.raw[0], "First: wrappingtest");
         assert_eq!(r.headers.raw[1], "Second: wrappingtest");
         assert_eq!(r.body_complete(), true);
@@ -284,15 +288,14 @@ mod tests {
     #[test]
     fn test_mutually_exclusive() {
         let mut r = Request::default();
-        r.update_raw(
+        let res = r.update_raw(
             &mut "GET / HTTP/1.1\r\nContent-Length: 10\r\nTransfer-Encoding: chunked\r\n\r\n"
                 .as_bytes()
                 .to_vec(),
         );
-        assert_eq!(r.parsing_errors.len(), 1);
         assert_eq!(
-            r.parsing_errors.pop(),
-            Some(errors::Errors::Header(
+            res,
+            Err(errors::Errors::Header(
                 "Transfer-Encoding and Content-Length headers are mutually exclusive",
             ))
         );
@@ -302,10 +305,16 @@ mod tests {
     #[test]
     fn test_body() {
         let mut r = Request::default();
-        r.update_raw(&mut "POST TEST\r".as_bytes().to_vec());
-        r.update_raw(&mut "\nContent-L".as_bytes().to_vec());
-        r.update_raw(&mut "ength: 4\r\n".as_bytes().to_vec());
-        r.update_raw(&mut "\r\nBODY".as_bytes().to_vec());
+
+        let res = r.update_raw(&mut "POST TEST\r".as_bytes().to_vec());
+        assert_eq!(res, Ok(()));
+        let res = r.update_raw(&mut "\nContent-L".as_bytes().to_vec());
+        assert_eq!(res, Ok(()));
+        let res = r.update_raw(&mut "ength: 4\r\n".as_bytes().to_vec());
+        assert_eq!(res, Ok(()));
+        let res = r.update_raw(&mut "\r\nBODY".as_bytes().to_vec());
+        assert_eq!(res, Ok(()));
+
         assert_eq!(r.headers.raw[0], "Content-Length: 4");
         assert_eq!(r.body_complete(), true);
     }
@@ -313,11 +322,12 @@ mod tests {
     #[test]
     fn test_post_edit_dump() {
         let mut r = Request::default();
-        r.update_raw(
+        let res = r.update_raw(
             &mut "GET / HTTP/1.1\r\nWrapping: wrapp\r\n ing\r\n\ttest\r\nAnother: a\r\nContent-Length: 7\r\n\r\nTHE END"
                 .as_bytes()
                 .to_vec(),
         );
+        assert_eq!(res, Ok(()));
         assert_eq!(r.headers.raw[0], "Wrapping: wrappingtest");
         assert_eq!(r.headers.raw[1], "Another: a");
         assert_eq!(r.body_complete(), true);
