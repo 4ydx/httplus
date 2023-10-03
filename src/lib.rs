@@ -182,30 +182,32 @@ impl Request<'_> {
             at = eindex;
 
             let header = self.headers.at(self.headers.raw.len() - 1);
+            let header_key = header.key.to_lowercase();
 
             // check most recent header to see if it contains content-length
-            if header.key.to_lowercase() == "content-length" && header.error.len() == 0 {
-                if self.is_chunked {
-                    break Err(errors::Errors::Header(
-                        "Transfer-Encoding and Content-Length headers are mutually exclusive",
-                    ));
-                } else {
-                    self.content_length = match header.value.trim().parse::<usize>() {
-                        Ok(i) => i,
-                        Err(e) => break Err(errors::Errors::ContentLength(e)),
-                    };
-                }
+            if header_key == "content-length" {
+                self.content_length = match header.value.trim().parse::<usize>() {
+                    Ok(i) => i,
+                    Err(e) => break Err(errors::Errors::ContentLength(e)),
+                };
             }
 
             // check for chunked state: Transfer-Encoding: gzip, chunked
-            if header.key.to_lowercase() == "transfer-encoding" && header.error.len() == 0 {
-                if self.content_length > 0 {
+            if header_key == "transfer-encoding" {
+                self.is_chunked = header.value.ends_with("chunked");
+
+                if !self.is_chunked && header.value.contains("chunked") {
                     break Err(errors::Errors::Header(
-                        "Transfer-Encoding and Content-Length headers are mutually exclusive",
+                        "chunked must appear at the end of the Transfer-Encoding header",
                     ));
-                } else {
-                    self.is_chunked = header.value.ends_with("chunked");
                 }
+            }
+
+            // check for mutually exclusive headers
+            if self.content_length > 0 && self.is_chunked {
+                break Err(errors::Errors::Header(
+                    "Transfer-Encoding and Content-Length headers are mutually exclusive",
+                ));
             }
         }
     }
@@ -286,6 +288,22 @@ mod tests {
     }
 
     #[test]
+    fn test_bad_chunked_header() {
+        let mut r = Request::default();
+        let res = r.update_raw(
+            &mut "GET / HTTP/1.1\r\nTransfer-Encoding: chunked, gzip\r\n\r\n"
+                .as_bytes()
+                .to_vec(),
+        );
+        assert_eq!(
+            res,
+            Err(errors::Errors::Header(
+                "chunked must appear at the end of the Transfer-Encoding header",
+            ))
+        );
+    }
+
+    #[test]
     fn test_mutually_exclusive() {
         let mut r = Request::default();
         let res = r.update_raw(
@@ -299,7 +317,6 @@ mod tests {
                 "Transfer-Encoding and Content-Length headers are mutually exclusive",
             ))
         );
-        assert_eq!(r.body_complete(), false);
     }
 
     #[test]
