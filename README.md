@@ -1,4 +1,5 @@
 ## Http request parser
+
 [![Rust](https://github.com/4ydx/httplus/actions/workflows/rust.yml/badge.svg?branch=master)](https://github.com/4ydx/httplus/actions/workflows/rust.yml)
 
 This is rudimentary.
@@ -13,3 +14,12 @@ Eventually all of the data (D) will be fed into request.update(D) then:
 
 1. request.body_complete() will return true.
 2. request.body() will return the body captured based on the content-length header.
+
+## rather random notes
+
+```
+https://en.wikipedia.org/wiki/HTTP_persistent_connection
+https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/100
+https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Expect
+https://sookocheff.com/post/networking/how-do-websockets-work/
+```
