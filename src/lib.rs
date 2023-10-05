@@ -272,7 +272,7 @@ impl Request {
 
                 let content_length_set = match self.content_length {
                     ContentLength::Unset => false,
-                    ContentLength::Value(content_length) => content_length > 0,
+                    _ => true,
                 };
                 let is_chunked_set = match self.is_chunked {
                     Chunked::Unset => false,
