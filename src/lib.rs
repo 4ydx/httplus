@@ -442,14 +442,8 @@ mod tests {
         assert_eq!(res, Ok(()));
         assert_eq!(r.headers.values[0].to_string(), "Wrapping: pre-update");
         assert_eq!(r.headers.values[1].to_string(), "Another: header");
+        assert_eq!(r.headers.values[2].to_string(), "Content-Length: 7");
         assert_eq!(r.body_complete(), true);
-
-        let h = r.headers.at(0).unwrap();
-        r.headers.set(0, h.key, "post-update".to_string()).unwrap();
-        assert_eq!(
-            r.headers.at(0).unwrap().to_string(),
-            "Wrapping: post-update"
-        );
 
         let res = match String::from_utf8(r.dump()) {
             Ok(s) => s,
@@ -457,7 +451,21 @@ mod tests {
         };
         assert_eq!(
             res,
-            "GET / HTTP/1.1\r\nWrapping: post-update\r\nAnother: header\r\nContent-Length: 7\r\n\r\nTHE END"
+            "GET / HTTP/1.1\r\nWrapping: pre-update\r\nAnother: header\r\nContent-Length: 7\r\n\r\nTHE END"
+        );
+
+        r.headers
+            .set(0, "Wrap".to_string(), "post-update".to_string())
+            .unwrap();
+        assert_eq!(r.headers.values[0].to_string(), "Wrap: post-update");
+
+        let res = match String::from_utf8(r.dump()) {
+            Ok(s) => s,
+            Err(e) => panic!("{}", e),
+        };
+        assert_eq!(
+            res,
+            "GET / HTTP/1.1\r\nWrap: post-update\r\nAnother: header\r\nContent-Length: 7\r\n\r\nTHE END"
         );
     }
 }
