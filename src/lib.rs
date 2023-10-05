@@ -102,14 +102,14 @@ impl Request {
         self.raw.append(data);
 
         match self.headers_end {
-            HeadersEnd::Unset => self.update_raw_helper(0)?,
-            HeadersEnd::Scanning(index) => self.update_raw_helper(index)?,
+            HeadersEnd::Unset => self.attempt_header_parsing(0)?,
+            HeadersEnd::Scanning(index) => self.attempt_header_parsing(index)?,
             HeadersEnd::FoundAt(_) => (),
         }
         Ok(())
     }
 
-    fn update_raw_helper(&mut self, mut at: usize) -> Result<(), errors::Errors> {
+    fn attempt_header_parsing(&mut self, mut at: usize) -> Result<(), errors::Errors> {
         while at < self.raw.len() {
             if self.raw[at..].starts_with(HEADER_END) {
                 self.headers_end = HeadersEnd::FoundAt(at);
