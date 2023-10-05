@@ -85,7 +85,7 @@ impl Request {
             HeadersEnd::FoundAt(at) => {
                 match self.is_chunked {
                     Chunked::Unset => false,
-                    Chunked::Processing => return false,
+                    Chunked::Processing => false,
                     Chunked::Complete => true,
                 };
                 match self.content_length {
