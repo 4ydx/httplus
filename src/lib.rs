@@ -102,11 +102,10 @@ impl Request {
         self.raw.append(data);
 
         match self.headers_end {
-            HeadersEnd::Unset => self.attempt_header_parsing(0)?,
-            HeadersEnd::Scanning(index) => self.attempt_header_parsing(index)?,
-            HeadersEnd::FoundAt(_) => (),
+            HeadersEnd::Unset => self.attempt_header_parsing(0),
+            HeadersEnd::Scanning(index) => self.attempt_header_parsing(index),
+            HeadersEnd::FoundAt(_) => Ok(()),
         }
-        Ok(())
     }
 
     fn attempt_header_parsing(&mut self, mut at: usize) -> Result<(), errors::Errors> {
