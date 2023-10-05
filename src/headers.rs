@@ -10,11 +10,6 @@ pub struct Header {
 
 impl Header {
     pub fn new(raw: Vec<u8>) -> Result<Self, Errors<'static>> {
-        let v = match String::from_utf8(raw.to_owned()) {
-            Ok(s) => Ok(s),
-            Err(e) => Err(Errors::HeaderFromUtf8(e)),
-        }?;
-
         let mut key: &[u8] = &[];
         let mut value: &[u8] = &[];
 
@@ -60,8 +55,6 @@ impl Header {
             Ok(s) => Ok(s),
             Err(e) => Err(Errors::HeaderFromUtf8(e)),
         }?;
-        println!("     '{}'", v);
-        println!("key: '{}'\nval: '{}'", key, value);
 
         Ok(Header {
             key: key.to_owned(),
