@@ -435,27 +435,29 @@ mod tests {
     fn test_post_edit_dump() {
         let mut r = Request::default();
         let res = r.update_raw(
-            &mut "GET / HTTP/1.1\r\nWrapping: wrapp\r\n ing\r\n\ttest\r\nAnother: a\r\nContent-Length: 7\r\n\r\nTHE END"
+            &mut "GET / HTTP/1.1\r\nWrapping: pre\r\n -\r\n\tupdate\r\nAnother: header\r\nContent-Length: 7\r\n\r\nTHE END"
                 .as_bytes()
                 .to_vec(),
         );
         assert_eq!(res, Ok(()));
-        assert_eq!(r.headers.values[0].to_string(), "Wrapping: wrappingtest");
-        assert_eq!(r.headers.values[1].to_string(), "Another: a");
+        assert_eq!(r.headers.values[0].to_string(), "Wrapping: pre-update");
+        assert_eq!(r.headers.values[1].to_string(), "Another: header");
         assert_eq!(r.body_complete(), true);
 
         let h = r.headers.at(0).unwrap();
-        r.headers.set(0, h.key, "updated-wrap".to_string()).unwrap();
+        r.headers.set(0, h.key, "post-update".to_string()).unwrap();
         assert_eq!(
             r.headers.at(0).unwrap().to_string(),
-            "Wrapping: updated-wrap"
+            "Wrapping: post-update"
         );
 
-        /*
-        match String::from_utf8(r.dump()) {
-            Ok(s) => println!("{}", s),
+        let res = match String::from_utf8(r.dump()) {
+            Ok(s) => s,
             Err(e) => panic!("{}", e),
-        }
-        */
+        };
+        assert_eq!(
+            res,
+            "GET / HTTP/1.1\r\nWrapping: post-update\r\nAnother: header\r\nContent-Length: 7\r\n\r\nTHE END"
+        );
     }
 }
