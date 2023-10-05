@@ -16,6 +16,14 @@ pub enum ContentLength {
     Value(usize),
 }
 
+#[derive(Debug, Clone, Default, PartialEq, PartialOrd)]
+pub enum Chunked {
+    #[default]
+    Unset,
+    Processing,
+    Complete,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Request {
     pub request_line: String,
@@ -23,7 +31,7 @@ pub struct Request {
     pub headers_end: HeadersEnd,
     pub raw: Vec<u8>,
     pub content_length: ContentLength,
-    pub is_chunked: bool,
+    pub is_chunked: Chunked,
 }
 
 const LINE_END: &[u8; 2] = b"\r\n";
@@ -75,9 +83,11 @@ impl Request {
             HeadersEnd::Unset => false,
             HeadersEnd::Scanning(_) => false,
             HeadersEnd::FoundAt(at) => {
-                if self.is_chunked {
-                    return false; // TODO
-                }
+                match self.is_chunked {
+                    Chunked::Unset => false,
+                    Chunked::Processing => return false,
+                    Chunked::Complete => true,
+                };
                 match self.content_length {
                     ContentLength::Unset => true,
                     ContentLength::Value(content_length) => {
@@ -239,22 +249,40 @@ impl Request {
                 if key == "transfer-encoding" {
                     if header.value.contains("chunked") && !header.value.ends_with("chunked") {
                         return Err(errors::Errors::Header(
-                            "chunked must appear at the end of the Transfer-Encoding header",
+                            "chunked must appear at the very end of the Transfer-Encoding header value",
                         ));
                     }
-                    self.is_chunked = header.value.ends_with("chunked");
-                }
-
-                // check for mutually exclusive headers
-                match self.content_length {
-                    ContentLength::Unset => (),
-                    ContentLength::Value(content_length) => {
-                        if content_length > 0 && self.is_chunked {
-                            return Err(errors::Errors::Header(
-                                "Transfer-Encoding and Content-Length headers are mutually exclusive"
-                            ));
+                    if header.value.ends_with("chunked") {
+                        match self.is_chunked {
+                            Chunked::Processing => {
+                                return Err(errors::Errors::Header(
+                                    "Transfer-Encoding must appear only once",
+                                ))
+                            }
+                            Chunked::Complete => {
+                                return Err(errors::Errors::Header(
+                                    "Unexpected chunked status: Complete",
+                                ))
+                            }
+                            Chunked::Unset => {
+                                self.is_chunked = Chunked::Processing;
+                            }
                         }
                     }
+                }
+
+                let content_length_set = match self.content_length {
+                    ContentLength::Unset => false,
+                    ContentLength::Value(content_length) => content_length > 0,
+                };
+                let is_chunked_set = match self.is_chunked {
+                    Chunked::Unset => false,
+                    _ => true,
+                };
+                if content_length_set && is_chunked_set {
+                    return Err(errors::Errors::Header(
+                        "Transfer-Encoding and Content-Length headers are mutually exclusive",
+                    ));
                 }
 
                 self.headers.values.push(header.clone());
@@ -365,7 +393,7 @@ mod tests {
         assert_eq!(
             res,
             Err(errors::Errors::Header(
-                "chunked must appear at the end of the Transfer-Encoding header",
+                "chunked must appear at the very end of the Transfer-Encoding header value",
             ))
         );
     }
